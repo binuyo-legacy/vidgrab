@@ -62,6 +62,17 @@
   pointer-events: none;
 }
 
+/* phones: take the panel out of overlay mode so it is part of the page flow.
+   Opening it pushes the content below (including the footer) down; nothing is covered. */
+@media (max-width: 560px) {
+  .qd-panel {
+    position: static;
+    z-index: auto;
+    margin-top: 8px;
+    box-sizing: border-box;
+  }
+}
+
 .qd-option {
   width: 100%;
   display: flex;
