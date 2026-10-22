@@ -60,6 +60,12 @@ An example file is included as `urls.txt.example`. Copy it to `urls.txt` and edi
 
 Options can be combined, for example `python vidgrab.py urls.txt --batch --quality 720 --out ~/Videos`.
 
+Limit long or large downloads, and control timeouts and retries:
+
+    python vidgrab.py <url> --max-duration 3600        # skip anything longer than 1 hour
+    python vidgrab.py <url> --max-filesize 500M        # skip files larger than 500 MB
+    python vidgrab.py <url> --timeout 600 --retries 1  # 10 min per attempt, 1 retry
+
 ## Options
 
 | Flag | Meaning |
@@ -70,6 +76,18 @@ Options can be combined, for example `python vidgrab.py urls.txt --batch --quali
 | `--out DIR` | output folder (created if missing, default: current folder) |
 | `--playlist` | download every item in a playlist |
 | `--batch` | treat the argument as a text file of URLs, one per line |
+| `--max-duration SECONDS` | skip videos longer than this (uses yt-dlp `--match-filter "duration < N"`, rejected before download) |
+| `--max-filesize SIZE` | skip files larger than this, e.g. `500M` or `2G` (uses yt-dlp `--max-filesize`) |
+| `--timeout SECONDS` | per-attempt download timeout (default `1800`) |
+| `--retries N` | retries after a failed attempt, `0` to `5` (default `2`) |
+
+## Errors
+
+- Input is checked before anything runs. Only `http://` and `https://` URLs are accepted. Anything else exits with a message such as `error: not a valid URL: ...`.
+- A missing `yt-dlp`, or a missing `ffmpeg` when `--audio` is used, exits with an install hint.
+- Failed downloads are retried up to `--retries` times, with a short pause between attempts. Errors that will not change on retry (unsupported URL, private or unavailable video, HTTP 403/404) are not retried.
+- A hung download is stopped after `--timeout` seconds and counts as a failed attempt.
+- With `--batch`, a retry runs the whole batch file again. yt-dlp already skips bad lines and keeps going past them.
 
 ## Notes
 
