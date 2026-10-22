@@ -1,4 +1,6 @@
-# vidgrab
+# VibeN (formerly vidgrab)
+
+The web app was rebranded to VibeN. The CLI and repo name stay `vidgrab`.
 
 A small command-line wrapper around [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloading video or audio from a single URL, a playlist, or a list of URLs in a text file.
 

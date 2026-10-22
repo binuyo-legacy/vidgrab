@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { QUALITIES, fileUrl, getJob, startDownload } from "./api.js";
 
 const POLL_MS = 1000;
+const REPO_URL = "https://github.com/binuyo-legacy/vidgrab";
 
 function validateUrl(value) {
   const v = value.trim();
@@ -100,14 +101,30 @@ export default function App() {
 
   return (
     <div className="shell">
-      <header className="brand">
-        <span className="logo" aria-hidden="true">v</span>
-        <span className="name">vidgrab</span>
+      <header className="topbar">
+        <div className="brand">
+          <span className="logo" aria-hidden="true">V</span>
+          <span className="name">VibeN</span>
+        </div>
+        <a className="repo-pill" href={REPO_URL} target="_blank" rel="noreferrer">github</a>
       </header>
 
-      <main className="card" aria-live="polite">
-        <h1>grab a video or audio</h1>
-        <p className="sub">paste a link from youtube, tiktok, instagram, x, vimeo and more.</p>
+      <section className="hero">
+        <span className="eyebrow">video + mp3 downloader</span>
+        <h1 className="headline">Download any video. <span className="grad">One paste.</span></h1>
+        <p className="lede">
+          Drop a link from YouTube, TikTok, Instagram, X, Vimeo and more. Pick video or mp3 and grab it.
+        </p>
+        <ul className="features" aria-label="features">
+          <li><span className="dot" aria-hidden="true" />video or mp3</li>
+          <li><span className="dot" aria-hidden="true" />works on most sites</li>
+          <li><span className="dot" aria-hidden="true" />no signup</li>
+        </ul>
+      </section>
+
+      <main className="card" aria-live="polite" id="grab">
+        <h2>grab a video or audio</h2>
+        <p className="sub">paste a link below to start.</p>
 
         <form onSubmit={onSubmit} noValidate>
           <label className="field">
@@ -216,7 +233,11 @@ export default function App() {
       </main>
 
       <footer className="foot">
-        only download what you have the right to download.
+        <p className="foot-line">
+          built by <span className="foot-strong">binuyo</span> ·{" "}
+          <a href={REPO_URL} target="_blank" rel="noreferrer">source on github</a>
+        </p>
+        <p className="foot-fine">only download what you have the right to download.</p>
       </footer>
     </div>
   );
