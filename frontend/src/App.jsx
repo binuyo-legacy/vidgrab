@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { QUALITIES, fileUrl, getJob, startDownload } from "./api.js";
+import Modal from "./Modal.jsx";
+import "./modal.css";
 
 const POLL_MS = 1000;
 const REPO_URL = "https://github.com/binuyo-legacy/vidgrab";
@@ -28,6 +30,7 @@ export default function App() {
   const [phase, setPhase] = useState("idle"); // idle | starting | running | ready | error
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
+  const [errorOpen, setErrorOpen] = useState(false);
   const [touched, setTouched] = useState(false);
   const pollRef = useRef(null);
   const inputRef = useRef(null);
@@ -47,6 +50,7 @@ export default function App() {
     setPhase("idle");
     setJob(null);
     setError("");
+    setErrorOpen(false);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -60,6 +64,7 @@ export default function App() {
     }
     stopPolling();
     setError("");
+    setErrorOpen(false);
     setJob(null);
     setPhase("starting");
     try {
@@ -74,8 +79,16 @@ export default function App() {
       poll(started.id);
     } catch (err) {
       setError(err.message);
+      setErrorOpen(true);
       setPhase("error");
     }
+  }
+
+  function failWith(message) {
+    stopPolling();
+    setError(message);
+    setErrorOpen(true);
+    setPhase("error");
   }
 
   async function poll(id) {
@@ -86,18 +99,19 @@ export default function App() {
         stopPolling();
         setPhase("ready");
       } else if (data.status === "error") {
-        stopPolling();
-        setError(data.error || "the download failed. try again.");
-        setPhase("error");
+        failWith(data.error || "the download failed. try again.");
       }
     } catch (err) {
-      stopPolling();
-      setError(err.message);
-      setPhase("error");
+      failWith(err.message);
     }
   }
 
   const percent = Math.round(job?.progress ?? 0);
+  const requestedHeight = Number(quality);
+  const gotHeight = job?.resolved_height;
+  // Shown on the done state: the real height yt-dlp picked, and a note if it had to go lower.
+  const qualityLabel = job?.quality_label || null;
+  const downgraded = mode === "video" && requestedHeight && gotHeight && gotHeight < requestedHeight;
 
   return (
     <div className="shell">
@@ -209,7 +223,13 @@ export default function App() {
 
         {phase === "ready" && (
           <section className="status ready" role="status">
-            <p className="status-msg">ready: {job?.filename || "your file"}</p>
+            <p className="status-msg">
+              ready: {job?.filename || "your file"}
+              {qualityLabel && <span className="quality-chip">{qualityLabel}</span>}
+            </p>
+            {downgraded && (
+              <p className="hint">{requestedHeight}p wasn't available for this link, so you got the closest lower quality ({gotHeight}p).</p>
+            )}
             <a className="primary download" href={fileUrl(job.id)} onClick={() => setTimeout(() => setPhase("done"), 400)}>
               download {mode === "audio" ? "mp3" : "video"}
             </a>
@@ -224,13 +244,30 @@ export default function App() {
           </section>
         )}
 
-        {phase === "error" && (
-          <section className="status error-box" role="alert">
+        {phase === "error" && !errorOpen && (
+          <section className="status error-box" role="status">
             <p className="status-msg">{error}</p>
             <button type="button" className="ghost" onClick={reset}>try again</button>
           </section>
         )}
       </main>
+
+      <Modal
+        open={errorOpen}
+        title="download didn't work"
+        onClose={() => setErrorOpen(false)}
+        actions={
+          <>
+            <button type="button" onClick={() => setErrorOpen(false)}>close</button>
+            <button type="button" className="primary-action" onClick={() => { setErrorOpen(false); reset(); }}>
+              try again
+            </button>
+          </>
+        }
+      >
+        <div className="modal-icon" aria-hidden="true">!</div>
+        <p>{error}</p>
+      </Modal>
 
       <footer className="foot">
         <p className="foot-line">

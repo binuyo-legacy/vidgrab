@@ -31,7 +31,7 @@ from starlette.background import BackgroundTask
 
 # vidgrab.py lives in the repo root, one level above this folder.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from vidgrab import VidgrabError, build_cmd, run_yt_dlp, validate_url  # noqa: E402
+from vidgrab import VidgrabError, build_cmd, read_resolved_format, run_yt_dlp, validate_url  # noqa: E402
 
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "2"))
 JOB_TTL = int(os.environ.get("JOB_TTL", "3600"))          # seconds before an unclaimed job is removed
@@ -61,6 +61,9 @@ class Job:
     workdir: Optional[Path] = None
     filename: Optional[str] = None
     filepath: Optional[Path] = None
+    resolved_height: Optional[int] = None   # height yt-dlp actually downloaded (video only)
+    resolved_format: Optional[str] = None   # yt-dlp format_id actually downloaded
+    requested_quality: str = "best"
     created: float = field(default_factory=time.time)
     served: bool = False
 
@@ -137,8 +140,9 @@ class DownloadRequest(BaseModel):
 def _find_output(workdir: Path) -> Optional[Path]:
     candidates = [
         p for p in workdir.iterdir()
-        if p.is_file() and not p.name.endswith(_UNFINISHED)
+        if p.is_file() and not p.name.startswith(".") and not p.name.endswith(_UNFINISHED)
     ]
+    # Skip hidden files (the metadata sidecar) and unfinished downloads.
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_size)
@@ -164,6 +168,7 @@ def _run_job(job: Job, req: DownloadRequest) -> None:
         job.status = "running"
         job.message = "starting download"
     try:
+        meta_path = job.workdir / ".vgmeta"
         cmd = build_cmd(
             req.url, job.workdir,
             audio=(req.mode == "audio"),
@@ -171,6 +176,7 @@ def _run_job(job: Job, req: DownloadRequest) -> None:
             playlist=False, batch=False,
             max_duration=req.max_duration,
             max_filesize=MAX_FILESIZE,
+            meta_path=meta_path,
         )
         run_yt_dlp(
             cmd,
@@ -182,9 +188,12 @@ def _run_job(job: Job, req: DownloadRequest) -> None:
         out = _find_output(job.workdir)
         if out is None:
             raise VidgrabError("the download finished but no file was produced")
+        height, fmt = read_resolved_format(meta_path)
         with jobs_lock:
             job.filepath = out
             job.filename = out.name
+            job.resolved_height = height
+            job.resolved_format = fmt
             job.progress = 100.0
             job.status = "done"
             job.message = "ready"
@@ -223,12 +232,21 @@ def health():
 def start_download(req: DownloadRequest):
     _preflight(req)
     _sweep_expired()
-    job = Job(id=uuid.uuid4().hex, mode=req.mode, url=req.url)
+    job = Job(id=uuid.uuid4().hex, mode=req.mode, url=req.url, requested_quality=req.quality)
     job.workdir = Path(tempfile.mkdtemp(prefix=f"vidgrab-{job.id[:8]}-"))
     with jobs_lock:
         jobs[job.id] = job
     executor.submit(_run_job, job, req)
     return {"id": job.id, "status": job.status}
+
+
+def _quality_label(job: Job) -> Optional[str]:
+    """Human label for the quality actually delivered, e.g. "720p" or "mp3"."""
+    if job.mode == "audio":
+        return "mp3"
+    if job.resolved_height:
+        return f"{job.resolved_height}p"
+    return None
 
 
 def _get_job(job_id: str) -> Job:
@@ -251,6 +269,9 @@ def job_status(job_id: str):
             "message": job.message,
             "error": job.error,
             "filename": job.filename,
+            "requested_quality": job.requested_quality,
+            "resolved_height": job.resolved_height,
+            "quality_label": _quality_label(job),
             "ready": job.status == "done" and not job.served,
         }
 

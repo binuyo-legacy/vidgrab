@@ -343,3 +343,16 @@ h2 { font-size: 22px; margin: 0 0 6px; font-weight: 650; letter-spacing: -0.01em
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+.quality-chip {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(60, 207, 145, 0.45);
+  background: rgba(60, 207, 145, 0.12);
+  color: var(--ok);
+  font-size: 12.5px;
+  font-weight: 650;
+  vertical-align: middle;
+}

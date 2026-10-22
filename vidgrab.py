@@ -70,7 +70,17 @@ def validate_filesize(value):
 
 
 def build_cmd(url, out, audio=False, quality=None, playlist=False, batch=False,
-              max_duration=None, max_filesize=None):
+              max_duration=None, max_filesize=None, meta_path=None):
+    """Build the yt-dlp command.
+
+    quality is a max height (e.g. "720"). The selector prefers separate video and
+    audio streams at or under that height (YouTube's 1080p+ only exists that way),
+    then a single muxed file at or under it, then the best single file as a last
+    resort so a download still succeeds when nothing fits the cap.
+
+    meta_path, when given, makes yt-dlp write "<height>|<format_id>" for the file it
+    actually produced, so the server can report the real quality back to the user.
+    """
     template = ("%(playlist_index)s - " if playlist else "") + "%(title).100s.%(ext)s"
     cmd = ["yt-dlp", "-o", str(out / template)]
     if playlist:
@@ -80,9 +90,12 @@ def build_cmd(url, out, audio=False, quality=None, playlist=False, batch=False,
     if audio:
         cmd += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
     elif quality:
-        cmd += ["-f", f"best[height<={quality}]/best"]
+        q = int(quality)
+        cmd += ["-f", f"bv*[height<={q}]+ba/b[height<={q}]/b"]
     else:
         cmd += ["-f", "bestvideo+bestaudio/best"]
+    if meta_path:
+        cmd += ["--print-to-file", "after_move:%(height)s|%(format_id)s", str(meta_path)]
     if max_duration:
         cmd += ["--match-filter", f"duration < {int(max_duration)}"]
     if max_filesize:
@@ -92,6 +105,17 @@ def build_cmd(url, out, audio=False, quality=None, playlist=False, batch=False,
     else:
         cmd.append(url)
     return cmd
+
+
+def read_resolved_format(meta_path):
+    """Return (height, format_id) from the file build_cmd wrote, or (None, None)."""
+    try:
+        line = Path(meta_path).read_text(encoding="utf-8").strip().splitlines()[-1]
+    except (OSError, IndexError):
+        return None, None
+    height_s, _, fmt = line.partition("|")
+    height = int(height_s) if height_s.isdigit() else None
+    return height, (fmt or None)
 
 
 def _run_once(cmd, timeout, on_line):
