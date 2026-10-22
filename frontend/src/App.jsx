@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { QUALITIES, fileUrl, getJob, startDownload } from "./api.js";
 import Modal from "./Modal.jsx";
+import QualityDropdown from "./QualityDropdown.jsx";
 import "./modal.css";
 
 const POLL_MS = 1000;
@@ -187,20 +188,14 @@ export default function App() {
               ))}
             </div>
 
-            <label className={`select-wrap ${mode === "audio" ? "dim" : ""}`}>
-              <span className="sr-only">quality</span>
-              <select
-                className="select"
-                value={quality}
-                disabled={busy || mode === "audio"}
-                onChange={(e) => setQuality(e.target.value)}
-                title={mode === "audio" ? "quality applies to video only" : "video quality"}
-              >
-                {QUALITIES.map((q) => (
-                  <option key={q.value} value={q.value}>{q.label}</option>
-                ))}
-              </select>
-            </label>
+            <QualityDropdown
+              options={QUALITIES}
+              value={quality}
+              onChange={setQuality}
+              disabled={busy || mode === "audio"}
+              dim={mode === "audio"}
+              title={mode === "audio" ? "quality applies to video only" : "video quality"}
+            />
           </div>
 
           <button className="primary" type="submit" disabled={busy}>
