@@ -1,0 +1,14 @@
+# Frontend deploy on Netlify. The backend (FastAPI + yt-dlp + ffmpeg) does NOT run on Netlify.
+# Deploy it to fly.io or railway and set VITE_API_URL in the Netlify site settings.
+[build]
+  command = "cd frontend && npm ci && npm run build"
+  publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Single page app: send every route to index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

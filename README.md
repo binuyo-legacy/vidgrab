@@ -89,6 +89,55 @@ Limit long or large downloads, and control timeouts and retries:
 - A hung download is stopped after `--timeout` seconds and counts as a failed attempt.
 - With `--batch`, a retry runs the whole batch file again. yt-dlp already skips bad lines and keeps going past them.
 
+
+## Web app
+
+The repo also has a web version: a FastAPI backend that wraps `vidgrab.py`, and a React + Vite frontend.
+
+    vidgrab/
+    ├── vidgrab.py        the CLI (the backend imports its download code)
+    ├── backend/          FastAPI app (main.py), requirements.txt
+    ├── frontend/         Vite + React app
+    ├── Dockerfile        backend image with ffmpeg, for fly.io or railway
+    └── netlify.toml      frontend build + SPA redirect for Netlify
+
+The backend API:
+
+- `POST /api/download` with `{"url", "mode": "video" | "audio", "quality": "best" | "1080" | "720" | "480" | "360", "max_duration"}` starts a job and returns `{"id", "status"}`.
+- `GET /api/jobs/{id}` returns progress (`progress` 0 to 100, `message`, `status`).
+- `GET /api/jobs/{id}/file` streams the finished file. The server deletes it once it has been sent.
+
+Jobs run in background threads. `MAX_CONCURRENT` (default 2) limits simultaneous downloads. Files are written to a temp folder, and any job nobody collects within an hour is cleaned up.
+
+### Local dev
+
+Terminal 1, backend (needs yt-dlp and ffmpeg):
+
+    pip install -r requirements.txt -r backend/requirements.txt
+    cd backend
+    uvicorn main:app --reload --port 8000
+
+Terminal 2, frontend:
+
+    cd frontend
+    npm install
+    npm run dev
+
+Open http://localhost:5173. Vite proxies `/api` to `http://localhost:8000`, so no environment variable is needed locally. To point the dev server at a different backend, set `VIDGRAB_API`.
+
+### Deploy
+
+The frontend and backend deploy separately, because the browser cannot run yt-dlp and Netlify cannot run long downloads.
+
+Backend on fly.io or Railway, using the root `Dockerfile` (it installs ffmpeg). Build from the repo root. On fly.io, run `fly launch` in the repo root and let it detect the Dockerfile. Railway works the same way. Set these environment variables if you need to change the defaults:
+
+- `ALLOWED_ORIGINS` the frontend origin, e.g. `https://your-site.netlify.app` (comma separated). Without it, the browser blocks API calls from any other origin.
+- `MAX_CONCURRENT`, `DOWNLOAD_TIMEOUT`, `MAX_FILESIZE`, `JOB_TTL`.
+
+Frontend on Netlify: `netlify.toml` already sets the build command, publish folder and the SPA redirect. Connect the repo, then set `VITE_API_URL` to your backend URL (for example `https://vidgrab-api.fly.dev`, no trailing slash) under Site settings, then Environment variables. Redeploy after changing it, because Vite bakes it in at build time.
+
+Notes: the in-memory job store means the backend must run as a single instance. Do not scale it horizontally without moving jobs to shared storage.
+
 ## Notes
 
 - Only download content you have the right to download. Follow the terms of the sites you use.
