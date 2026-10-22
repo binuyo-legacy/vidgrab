@@ -71,8 +71,8 @@ def validate_filesize(value):
 
 def build_cmd(url, out, audio=False, quality=None, playlist=False, batch=False,
               max_duration=None, max_filesize=None):
-    cmd = ["yt-dlp", "-o", str(out / "%(playlist_index)s - %(title).100s.%(ext)s"
-                           if playlist else "%(title).100s.%(ext)s")]
+    template = ("%(playlist_index)s - " if playlist else "") + "%(title).100s.%(ext)s"
+    cmd = ["yt-dlp", "-o", str(out / template)]
     if playlist:
         cmd.append("--yes-playlist")
     else:
