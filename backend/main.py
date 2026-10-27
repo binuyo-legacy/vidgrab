@@ -7,8 +7,8 @@ Endpoints:
     POST /api/download            start a job, returns {"id", "status"}   (any yt-dlp site)
     GET  /api/jobs/{id}           progress and status
     GET  /api/jobs/{id}/file      stream the finished file (deleted after it is served)
-    GET  /api/stream?url=&format= convert a YouTube link and stream the file straight back
-                                  in one request (mp3 or mp4). YouTube links only.
+    GET  /api/stream?url=&format= convert a link and stream the file straight back
+                                  in one request (mp3 or mp4). any yt-dlp site.
 """
 import atexit
 import base64
@@ -61,8 +61,6 @@ RATE_LIMITS = {"stream": 5, "download": 10}                 # requests per IP pe
 _PCT_RE = re.compile(r"\[download\]\s+([\d.]+)%")
 _POST_RE = re.compile(r"^\[(Merger|ExtractAudio|VideoConvertor|Fixup\w*)\]")
 _UNFINISHED = (".part", ".ytdl", ".temp")
-
-YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 
 log = logging.getLogger("vidgrab")
 
@@ -138,11 +136,12 @@ class StreamError(Exception):
         self.stderr = stderr
 
 
-def validate_youtube_url(url: str) -> str:
+def validate_media_url(url: str) -> str:
+    """Basic sanity check only: an http(s) link with a host. Any site yt-dlp supports is allowed through."""
     url = (url or "").strip()
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or (parsed.hostname or "").lower() not in YOUTUBE_HOSTS:
-        raise HTTPException(status_code=400, detail="only youtube links are supported here (youtube.com or youtu.be)")
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="that doesn't look like a full link. paste a full http or https link.")
     return url
 
 
@@ -176,7 +175,9 @@ def _friendly(stderr: str) -> str:
         return "youtube asked for a sign-in check for this video. the server needs fresh YouTube cookies (YOUTUBE_COOKIES_B64)."
     if "private video" in low:
         return "this video is private."
-    if "video unavailable" in low or "not available" in low:
+    if "unsupported url" in low:
+        return "this link is not from a site the downloader supports. check the link and try again."
+    if "video unavailable" in low or "this video is not available" in low:
         return "this video is unavailable."
     if "age" in low and "restricted" in low:
         return "this video is age restricted and can't be downloaded without a signed-in account."
@@ -592,7 +593,7 @@ def stream_download(
     mp3: quality is the bitrate in kbps (128, 192, 320; default 192).
     """
     check_rate(request, "stream")
-    url = validate_youtube_url(url)
+    url = validate_media_url(url)
     if format == "mp3":
         quality = quality or "192"
         if quality not in MP3_BITRATES:

@@ -55,26 +55,28 @@ def _streams(path: Path) -> set:
     return set(out.split())
 
 
-# --- URL whitelist -------------------------------------------------------------------------
+# --- URL sanity check (any yt-dlp site is allowed through) ----------------------------------
 @pytest.mark.parametrize("url", [
     "https://www.youtube.com/watch?v=abc",
     "https://youtu.be/abc",
-    "https://m.youtube.com/watch?v=abc",
-    "https://music.youtube.com/watch?v=abc",
+    "https://www.tiktok.com/@user/video/7694202895176043796",
+    "https://www.instagram.com/reel/abc/",
+    "https://x.com/user/status/123",
+    "https://vimeo.com/76979871",
+    "https://example.com/video.mp4",
 ])
-def test_youtube_urls_accepted(url):
-    assert main.validate_youtube_url(url) == url
+def test_media_urls_accepted(url):
+    assert main.validate_media_url(url) == url
 
 
 @pytest.mark.parametrize("url", [
-    "https://vimeo.com/76979871",
-    "https://example.com/youtube.com",
-    "https://youtube.com.evil.io/watch?v=abc",
     "ftp://youtube.com/x",
     "javascript:alert(1)",
+    "https://",
+    "not a link",
     "",
 ])
-def test_non_youtube_urls_rejected(url, client):
+def test_bad_urls_rejected(url, client):
     r = client.get("/api/stream", params={"url": url, "format": "mp4"})
     assert r.status_code in (400, 422)
 
