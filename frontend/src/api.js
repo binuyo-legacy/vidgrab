@@ -9,6 +9,17 @@ export const QUALITIES = [
   { value: "360", label: "360p or lower" },
 ];
 
+// How long we wait for the one-request stream before giving up and using the job flow.
+// The server converts the file before it sends anything, so this is effectively total time.
+// Render's free tier can cold-start slowly, so these are generous.
+export const STREAM_TIMEOUT_MS = {
+  audio: 150_000,
+  video: 240_000,
+};
+
+export const RATE_LIMIT_MESSAGE =
+  "you've hit the download limit for now. wait a minute, then try again.";
+
 const FALLBACK = {
   400: "that link does not look right. paste a full http or https link.",
   404: "this download could not be found. start it again.",
@@ -25,15 +36,18 @@ export function friendlyError(status, detail) {
   return FALLBACK[status] || "something went wrong on the server. please try again.";
 }
 
+function detailFrom(body) {
+  if (typeof body?.detail === "string") return body.detail;
+  if (Array.isArray(body?.detail) && body.detail[0]?.msg) {
+    return body.detail[0].msg.replace(/^Value error, /, "");
+  }
+  return null;
+}
+
 async function readError(res) {
   let detail = null;
   try {
-    const body = await res.json();
-    if (typeof body.detail === "string") {
-      detail = body.detail;
-    } else if (Array.isArray(body.detail) && body.detail[0]?.msg) {
-      detail = body.detail[0].msg.replace(/^Value error, /, "");
-    }
+    detail = detailFrom(await res.json());
   } catch {
     /* body was not JSON */
   }
@@ -70,4 +84,117 @@ export async function getJob(id) {
 
 export function fileUrl(id) {
   return `${BASE}/api/jobs/${encodeURIComponent(id)}/file`;
+}
+
+// --- one-request stream (GET /api/stream) -------------------------------------------------
+
+// Builds the stream URL. mp3 quality is a bitrate the server defaults for us, so we only send it for mp4.
+export function buildStreamUrl(base, { url, mode, quality }) {
+  const format = mode === "audio" ? "mp3" : "mp4";
+  const params = new URLSearchParams({ url, format });
+  if (format === "mp4" && quality) params.set("quality", quality);
+  return `${String(base || "").replace(/\/+$/, "")}/api/stream?${params.toString()}`;
+}
+
+// Reads the filename out of a Content-Disposition header (supports filename* and filename).
+export function parseFilename(header) {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      const name = decodeURIComponent(star[1].trim().replace(/^"|"$/g, ""));
+      if (name) return name;
+    } catch {
+      /* fall through to the plain filename */
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : null;
+}
+
+// A failed stream attempt. `reason` tells the caller whether a fallback makes sense.
+//   rate_limit: server said wait (429). no fallback, the message is the answer.
+//   cancelled:  the user pressed cancel. no fallback.
+//   timeout | network | http: the caller may fall back to the job flow.
+export class StreamFailure extends Error {
+  constructor(message, { reason, status = null }) {
+    super(message);
+    this.name = "StreamFailure";
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+// Decides whether a stream failure should silently switch to the job flow.
+export function shouldFallback(err) {
+  if (!(err instanceof StreamFailure)) return true;
+  if (err.reason === "rate_limit" || err.reason === "cancelled") return false;
+  // these mean the request itself is wrong, the job flow would refuse it too
+  if (err.reason === "http" && [400, 413].includes(err.status)) return false;
+  return true;
+}
+
+// Fetches the finished file in one request. Resolves with { blob, filename } or throws StreamFailure.
+export async function streamDownload({ url, mode, quality, signal, timeoutMs }) {
+  const limit = timeoutMs ?? STREAM_TIMEOUT_MS[mode === "audio" ? "audio" : "video"];
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, limit);
+  const forwardAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", forwardAbort);
+  }
+
+  const failure = () => {
+    if (signal?.aborted) return new StreamFailure("cancelled.", { reason: "cancelled" });
+    if (timedOut) {
+      return new StreamFailure("the server took too long. trying a backup way...", { reason: "timeout" });
+    }
+    return new StreamFailure("couldn't reach the download server. trying a backup way...", { reason: "network" });
+  };
+
+  try {
+    let res;
+    try {
+      res = await fetch(buildStreamUrl(BASE, { url, mode, quality }), { signal: controller.signal });
+    } catch {
+      throw failure();
+    }
+
+    if (res.status === 429) {
+      throw new StreamFailure(RATE_LIMIT_MESSAGE, { reason: "rate_limit", status: 429 });
+    }
+    if (!res.ok) {
+      const message = await readError(res);
+      throw new StreamFailure(message, { reason: "http", status: res.status });
+    }
+
+    let blob;
+    try {
+      blob = await res.blob();
+    } catch {
+      throw failure();
+    }
+    const filename = parseFilename(res.headers.get("Content-Disposition")) || (mode === "audio" ? "audio.mp3" : "video.mp4");
+    return { blob, filename };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+}
+
+// Saves a blob to the device by way of a temporary object URL. Works on phones too.
+export function saveBlob(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 }

@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { QUALITIES, fileUrl, getJob, startDownload } from "./api.js";
+import {
+  QUALITIES,
+  StreamFailure,
+  fileUrl,
+  getJob,
+  saveBlob,
+  shouldFallback,
+  startDownload,
+  streamDownload,
+} from "./api.js";
 import Modal from "./Modal.jsx";
 import QualityDropdown from "./QualityDropdown.jsx";
 import "./modal.css";
@@ -28,31 +37,71 @@ export default function App() {
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState("video");
   const [quality, setQuality] = useState("best");
-  const [phase, setPhase] = useState("idle"); // idle | starting | running | ready | error
+  // idle | streaming | starting | running | ready | done | error
+  const [phase, setPhase] = useState("idle");
   const [job, setJob] = useState(null);
   const [error, setError] = useState("");
   const [errorOpen, setErrorOpen] = useState(false);
   const [touched, setTouched] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [notice, setNotice] = useState("");
   const pollRef = useRef(null);
+  const abortRef = useRef(null);
+  const tickRef = useRef(null);
   const inputRef = useRef(null);
 
   const urlError = touched ? validateUrl(url) : "";
-  const busy = phase === "starting" || phase === "running";
+  const busy = phase === "streaming" || phase === "starting" || phase === "running";
 
-  useEffect(() => () => clearInterval(pollRef.current), []);
+  useEffect(
+    () => () => {
+      clearInterval(pollRef.current);
+      clearInterval(tickRef.current);
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   function stopPolling() {
     clearInterval(pollRef.current);
     pollRef.current = null;
   }
 
+  function stopTicking() {
+    clearInterval(tickRef.current);
+    tickRef.current = null;
+  }
+
   function reset() {
     stopPolling();
+    stopTicking();
+    abortRef.current?.abort();
+    abortRef.current = null;
     setPhase("idle");
     setJob(null);
     setError("");
     setErrorOpen(false);
+    setNotice("");
+    setElapsed(0);
     setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  // The old job flow: start a job, then poll until the file is ready. Used as the backup route.
+  async function runJobFlow(payload) {
+    stopPolling();
+    setJob(null);
+    setPhase("starting");
+    try {
+      const started = await startDownload(payload);
+      setJob({ id: started.id, status: "queued", progress: 0, message: "waiting for a free slot" });
+      setPhase("running");
+      pollRef.current = setInterval(() => poll(started.id), POLL_MS);
+      poll(started.id);
+    } catch (err) {
+      setError(err.message);
+      setErrorOpen(true);
+      setPhase("error");
+    }
   }
 
   async function onSubmit(e) {
@@ -64,25 +113,52 @@ export default function App() {
       return;
     }
     stopPolling();
+    stopTicking();
     setError("");
     setErrorOpen(false);
+    setNotice("");
     setJob(null);
-    setPhase("starting");
+
+    const payload = {
+      url: url.trim(),
+      mode,
+      quality: mode === "video" ? quality : "best",
+    };
+
+    // First try: one request that returns the finished file.
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setElapsed(0);
+    setPhase("streaming");
+    const started = Date.now();
+    tickRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+
     try {
-      const started = await startDownload({
-        url: url.trim(),
-        mode,
-        quality: mode === "video" ? quality : "best",
-      });
-      setJob({ id: started.id, status: "queued", progress: 0, message: "waiting for a free slot" });
-      setPhase("running");
-      pollRef.current = setInterval(() => poll(started.id), POLL_MS);
-      poll(started.id);
+      const { blob, filename } = await streamDownload({ ...payload, signal: controller.signal });
+      if (abortRef.current !== controller) return; // cancelled while the file was arriving
+      stopTicking();
+      abortRef.current = null;
+      saveBlob(blob, filename);
+      setPhase("done");
     } catch (err) {
-      setError(err.message);
-      setErrorOpen(true);
-      setPhase("error");
+      if (abortRef.current !== controller) return; // cancelled or reset by the user
+      stopTicking();
+      abortRef.current = null;
+      if (err instanceof StreamFailure && err.reason === "cancelled") return;
+      if (shouldFallback(err)) {
+        // Quiet fallback: the job flow is the safety net if the one-request route fails or times out.
+        setNotice("the quick way didn't finish. switching to the backup way...");
+        await runJobFlow(payload);
+      } else {
+        setError(err.message);
+        setErrorOpen(true);
+        setPhase("error");
+      }
     }
+  }
+
+  function cancelStreaming() {
+    reset();
   }
 
   function failWith(message) {
@@ -202,6 +278,28 @@ export default function App() {
             {phase === "starting" ? "starting..." : busy ? "grabbing..." : mode === "audio" ? "get mp3" : "get video"}
           </button>
         </form>
+
+        {phase === "streaming" && (
+          <section className="status" role="status" aria-live="polite">
+            <div className="status-top">
+              <span className="status-msg spin-row">
+                <span className="spinner" aria-hidden="true" />
+                {mode === "audio" ? "converting to mp3..." : "preparing your video..."}
+              </span>
+              <span className="status-pct">{elapsed}s</span>
+            </div>
+            <p className="hint">
+              {mode === "audio"
+                ? "this usually takes under a minute."
+                : "mp4 can take a few minutes. keep this tab open until it finishes."}
+            </p>
+            <button type="button" className="ghost cancel" onClick={cancelStreaming}>cancel</button>
+          </section>
+        )}
+
+        {notice && (phase === "starting" || phase === "running") && (
+          <p className="hint notice" role="status">{notice}</p>
+        )}
 
         {(phase === "running" || phase === "starting") && (
           <section className="status" role="status">
